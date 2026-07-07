@@ -86,10 +86,37 @@ const map = L.map("map", { zoomControl: true, attributionControl: true });
 map.setView([35.1983, -111.6513], 11);
 map.attributionControl.setPrefix(false);
 
+/* theme: system preference unless the user picked one with the toggle */
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+const savedTheme = localStorage.getItem("theme");
+if (savedTheme === "light" || savedTheme === "dark") {
+  document.documentElement.dataset.theme = savedTheme;
+}
+// #light / #dark in the URL wins for this visit (not persisted)
+const hashTheme = location.hash.match(/\b(light|dark)\b/);
+if (hashTheme) document.documentElement.dataset.theme = hashTheme[1];
+function isDark() {
+  const t = document.documentElement.dataset.theme;
+  return t ? t === "dark" : darkQuery.matches;
+}
+function applyTheme() {
+  document.getElementById("theme-btn").textContent = isDark() ? "☀" : "☾";
+  setBasemap();
+  rebuildMarkers();
+}
+document.getElementById("theme-btn").addEventListener("click", () => {
+  const next = isDark() ? "light" : "dark";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem("theme", next);
+  applyTheme();
+});
+darkQuery.addEventListener("change", () => {
+  if (!document.documentElement.dataset.theme) applyTheme();
+});
+
 let baseLayer = null;
 function setBasemap() {
-  const style = darkQuery.matches ? "dark_all" : "light_all";
+  const style = isDark() ? "dark_all" : "light_all";
   if (baseLayer) map.removeLayer(baseLayer);
   baseLayer = L.tileLayer(
     `https://{s}.basemaps.cartocdn.com/${style}/{z}/{x}/{y}{r}.png`,
@@ -101,7 +128,7 @@ function setBasemap() {
   ).addTo(map);
 }
 setBasemap();
-darkQuery.addEventListener("change", setBasemap);
+document.getElementById("theme-btn").textContent = isDark() ? "☀" : "☾";
 
 /* ---------- IDW canvas overlay ---------- */
 
@@ -229,7 +256,7 @@ function rebuildMarkers() {
     const marker = L.circleMarker([meta.lat, meta.lon], {
       radius: isEgg ? 9 : 7,
       weight: isEgg ? 3 : 1.2,
-      color: isEgg ? (darkQuery.matches ? "#1a1a19" : "#ffffff") : "rgba(0,0,0,0.45)",
+      color: isEgg ? (isDark() ? "#1a1a19" : "#ffffff") : "rgba(0,0,0,0.45)",
       fillOpacity: 0.95,
       fillColor: "#9a9a9a",
     }).addTo(map);

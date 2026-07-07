@@ -7,8 +7,10 @@
   --accent: #2a78d6;
   --shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
+/* dark tokens apply when the system prefers dark (and no explicit choice),
+   or when the user picks dark with the toggle */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --surface-1: #1a1a19;
     --text-primary: #ffffff;
     --text-secondary: #c3c2b7;
@@ -16,6 +18,14 @@
     --border: rgba(255, 255, 255, 0.10);
     --accent: #3987e5;
   }
+}
+:root[data-theme="dark"] {
+  --surface-1: #1a1a19;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #898781;
+  --border: rgba(255, 255, 255, 0.10);
+  --accent: #3987e5;
 }
 
 * { box-sizing: border-box; }
@@ -56,6 +66,11 @@ h1 {
   font-size: 16px;
   margin: 0 0 8px;
 }
+.title-actions {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
 .link-btn {
   background: none;
   border: none;
@@ -64,6 +79,7 @@ h1 {
   font-size: 12px;
   padding: 0;
 }
+#theme-btn { font-size: 14px; line-height: 1; }
 
 .control-row {
   display: flex;
