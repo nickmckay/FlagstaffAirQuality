@@ -16,6 +16,10 @@ CALIBRATION_PATH = DATA_DIR / "calibration.json"
 
 SPECIES = ["pm1", "pm25", "pm10"]
 
+# Plausibility ceiling (µg/m³): consumer optical sensors saturate well below
+# this; higher readings are electronics glitches, not air.
+MAX_PLAUSIBLE_PM = 1500
+
 
 def load_config():
     with open(REPO_ROOT / "config.yaml") as f:
@@ -89,17 +93,18 @@ def species_values(row, calibration=None):
     out = {}
     is_pa = row.get("network") == "purpleair"
     for sp in SPECIES:
+        v = None
         if isinstance(row.get(sp), (int, float)):
-            out[sp] = row[sp]
+            v = row[sp]
         elif is_pa:
             if sp == "pm25":
                 v = epa_correction_pm25(row.get("pm25_cf1"), row.get("rh"))
             else:
                 v = row.get(f"{sp}_raw")
-            if isinstance(v, (int, float)):
-                if calibration:
-                    v = apply_local_fit(v, calibration.get(sp))
-                out[sp] = v
+            if isinstance(v, (int, float)) and calibration:
+                v = apply_local_fit(v, calibration.get(sp))
+        if isinstance(v, (int, float)) and 0 <= v <= MAX_PLAUSIBLE_PM:
+            out[sp] = v
     return out
 
 
