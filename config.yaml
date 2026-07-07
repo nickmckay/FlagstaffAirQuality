@@ -33,9 +33,29 @@ purpleair:
 
 airqualityegg:
   base_url: https://airqualityegg.com/api/v2
-  # Egg serial numbers near Flagstaff. Populate with scripts/discover_eggs.py,
-  # then pin the list here.
-  serials: []
+  # Eggs publish PM to the public mapped feed sporadically; readings carry
+  # their own timestamps and are archived into their true time slot, so a
+  # long acceptance window is safe.
+  max_age_s: 86400
+  # Egg serial numbers near Flagstaff (found with scripts/discover_eggs.py).
+  # lat/lon are fallbacks; live coordinates from the API win when present.
+  serials:
+    - serial: egg0004a30b0131bbe9
+      name: Downtown Flagstaff
+      lat: 35.1921
+      lon: -111.6572
+    - serial: egg0004a30b013205f2
+      name: East Flagstaff
+      lat: 35.2021
+      lon: -111.6042
+    - serial: egg0004a30b0131cc40
+      name: North Flagstaff
+      lat: 35.2378
+      lon: -111.6651
+    - serial: egg0004a30b0131fe09
+      name: Doney Park
+      lat: 35.2651
+      lon: -111.5433
 
 windows:
   - key: 24h

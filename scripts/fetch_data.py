@@ -15,9 +15,8 @@ import argparse
 import math
 import os
 import random
-import re
 import sys
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -118,22 +117,17 @@ def fetch_purpleair(cfg, sensors_meta):
     return rows, sensors_meta
 
 
-# Egg topics/payloads vary by firmware; match species tokens loosely.
-EGG_SPECIES_PATTERNS = {
-    "pm1": re.compile(r"pm[\-_.]?1(\.0|p0)?(?![0-9.])", re.I),
-    "pm25": re.compile(r"pm[\-_.]?2[\._p]?5", re.I),
-    "pm10": re.compile(r"pm[\-_.]?10(?![0-9.])", re.I),
-}
+# Air Quality Egg: the public /eggs/mapped endpoint carries each mapped egg's
+# latest readings (labels pm1p0/pm2p5/pm10p0, humidity, lat/lon) with
+# per-reading timestamps. No auth needed; per-device endpoints are restricted
+# to owned/followed eggs and are only required for historical backfill.
+EGG_LABELS = {"pm1p0": "pm1", "pm2p5": "pm25", "pm10p0": "pm10"}
+EGG_MAX_PM = 1500  # µg/m³; above this treat as sensor fault
 
 
-def egg_value_from_message(msg):
-    """Pull a numeric concentration from an Egg message payload."""
-    payload = msg.get("payload", msg)
-    for key in ("converted-value", "converted_value", "compensated-value", "value"):
-        v = payload.get(key)
-        if isinstance(v, (int, float)):
-            return float(v)
-    return None
+def parse_egg_ts(s):
+    """lastData timestamps look like '07/07/2026 17:07:21' (UTC)."""
+    return datetime.strptime(s, "%m/%d/%Y %H:%M:%S").replace(tzinfo=timezone.utc)
 
 
 def fetch_eggs(cfg):
@@ -141,65 +135,58 @@ def fetch_eggs(cfg):
     serials = aqe.get("serials") or []
     if not serials:
         return [], {}
-    key = os.environ.get("AQE_API_KEY")
-    if not key:
-        print("WARNING: AQE_API_KEY not set; skipping Air Quality Egg")
-        return [], {}
-
-    now = utcnow()
-    rows, meta = [], {}
+    wanted = {}
     for entry in serials:
         if isinstance(entry, dict):
-            serial = entry["serial"]
-            egg_meta = {
-                "name": entry.get("name", serial),
-                "lat": entry.get("lat"),
-                "lon": entry.get("lon"),
-                "network": "egg",
-            }
+            wanted[entry["serial"].lower()] = entry.get("name")
         else:
-            serial, egg_meta = entry, {"name": entry, "lat": None, "lon": None, "network": "egg"}
-        sid = f"egg_{serial}"
-        try:
-            resp = requests.get(
-                f"{aqe['base_url']}/most-recent/messages/device/{serial}",
-                params={"apiKey": key},
-                timeout=60,
-            )
-            resp.raise_for_status()
-            body = resp.json()
-        except Exception as e:
-            print(f"Egg {serial}: fetch failed: {e}")
-            continue
+            wanted[str(entry).lower()] = None
 
-        messages = body if isinstance(body, list) else body.get("messages", [body])
-        row = {"ts": iso(now), "id": sid, "network": "egg"}
-        for msg in messages:
-            if not isinstance(msg, dict):
-                continue
-            topic = str(msg.get("topic", "")) + " " + str(
-                msg.get("payload", {}).get("sensor-part-number", "")
-            )
-            payload = msg.get("payload", msg)
-            # Prefer explicit lat/lon from the message
-            for latk, lonk in (("latitude", "longitude"), ("lat", "lon")):
-                if isinstance(payload.get(latk), (int, float)):
-                    egg_meta["lat"] = payload[latk]
-                    egg_meta["lon"] = payload[lonk]
-            # pm10 pattern must be checked before pm1 ("pm10" contains "pm1")
-            for sp in ("pm10", "pm25", "pm1"):
-                if sp in row:
+    try:
+        resp = requests.get(f"{aqe['base_url']}/eggs/mapped", timeout=120)
+        resp.raise_for_status()
+        eggs = resp.json()
+    except Exception as e:
+        print(f"Egg fetch failed: {e}")
+        return [], {}
+
+    max_age_s = aqe.get("max_age_s", 86400)
+    now = utcnow()
+    rows, meta = [], {}
+    for egg in eggs:
+        serial = str(egg.get("serial_number", "")).lower()
+        if serial not in wanted:
+            continue
+        sid = f"egg_{serial}"
+        egg_meta = {"name": wanted[serial] or serial, "lat": None, "lon": None, "network": "egg"}
+        values, newest = {}, None
+        for item in egg.get("lastData", []):
+            label = item.get("label")
+            if label == "latitude":
+                egg_meta["lat"] = item.get("value")
+            elif label == "longitude":
+                egg_meta["lon"] = item.get("value")
+            elif label in EGG_LABELS:
+                try:
+                    ts = parse_egg_ts(item["timestamp"])
+                    v = float(item["value"])
+                except (KeyError, ValueError, TypeError):
                     continue
-                if EGG_SPECIES_PATTERNS[sp].search(topic):
-                    v = egg_value_from_message(msg)
-                    if v is not None:
-                        row[sp] = v
-        if any(sp in row for sp in SPECIES):
-            rows.append(row)
-            meta[sid] = egg_meta
+                if (now - ts).total_seconds() > max_age_s or not (0 <= v <= EGG_MAX_PM):
+                    continue
+                values[EGG_LABELS[label]] = v
+                newest = max(newest, ts) if newest else ts
+        # fall back to coordinates pinned in config.yaml
+        for entry in serials:
+            if isinstance(entry, dict) and entry["serial"].lower() == serial:
+                egg_meta["lat"] = egg_meta["lat"] or entry.get("lat")
+                egg_meta["lon"] = egg_meta["lon"] or entry.get("lon")
+        meta[sid] = egg_meta
+        if values and newest:
+            rows.append({"ts": iso(newest), "id": sid, "network": "egg", **values})
         else:
-            print(f"Egg {serial}: no PM values found in most-recent messages")
-    print(f"Eggs: {len(rows)} of {len(serials)} reporting")
+            print(f"Egg {serial}: no fresh PM readings (last data too old or invalid)")
+    print(f"Eggs: {len(rows)} of {len(wanted)} reporting fresh PM data")
     return rows, meta
 
 

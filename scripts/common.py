@@ -143,10 +143,15 @@ def read_archive(max_age_days=None):
 
 
 def append_archive(rows, keep_days):
-    """Append rows, then rewrite the file pruned to keep_days."""
-    existing = read_archive(max_age_days=keep_days)
-    existing.extend(rows)
-    existing.sort(key=lambda r: r["ts"])
+    """Append rows, then rewrite the file pruned to keep_days.
+
+    Deduplicates on (ts, id) with newest write winning — egg readings carry
+    their own timestamps and get re-seen across polls.
+    """
+    merged = {}
+    for row in read_archive(max_age_days=keep_days) + list(rows):
+        merged[(row["ts"], row["id"])] = row
+    existing = sorted(merged.values(), key=lambda r: r["ts"])
     ARCHIVE_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = ARCHIVE_PATH.with_suffix(".tmp")
     with open(tmp, "w") as f:

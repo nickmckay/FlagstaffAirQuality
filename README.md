@@ -10,10 +10,12 @@ Arizona, combining the [PurpleAir](https://www2.purpleair.com/) and
 ## How it works
 
 - `scripts/fetch_data.py` runs every 15 minutes (`.github/workflows/update-data.yml`):
-  one bounding-box call to the PurpleAir API plus a most-recent call per
-  configured Egg. Results are appended to a rolling 30-day archive and
-  condensed into animation frames (24 h and 48 h at 15-minute steps, 7 days
-  hourly).
+  one bounding-box call to the PurpleAir API plus one call to the public
+  Air Quality Egg `/eggs/mapped` feed (which carries each mapped Egg's latest
+  readings with their own timestamps; Eggs publish sporadically, so readings
+  up to 24 h old are archived into their true time slot). Results accumulate
+  in a rolling 30-day archive and are condensed into animation frames (24 h
+  and 48 h at 15-minute steps, 7 days hourly).
 - Generated JSON lives on the single-commit `data` branch (force-pushed each
   run, so the repo history stays small) and is deployed to Pages together with
   the static site.
@@ -45,13 +47,13 @@ when frames are built, so a refit retroactively updates the displayed history.
    key. New accounts get 1M points; this pipeline uses roughly 0.5–1M/month.
    The fetch log prints points consumed per call; if the budget gets tight,
    trim `purpleair.data_fields` in `config.yaml` or slow the cron.
-2. **Air Quality Egg key**: Egg web portal → Account Settings.
-3. Add both as repository secrets:
-   `gh secret set PURPLEAIR_API_KEY` and `gh secret set AQE_API_KEY`.
-4. **Find Eggs**: `AQE_API_KEY=... python scripts/discover_eggs.py`, then paste
-   the reported serials (with lat/lon) into `config.yaml` under
-   `airqualityegg.serials`.
-5. Enable Pages with source "GitHub Actions" (Settings → Pages), then push or
+2. Add it as a repository secret: `gh secret set PURPLEAIR_API_KEY`.
+   (Air Quality Egg data comes from the public mapped feed; no key needed.
+   The `AQE_API_KEY` secret is optional and currently unused; the restricted
+   per-device Egg endpoints only authorize eggs your account owns or follows.)
+3. **Find Eggs**: `python scripts/discover_eggs.py`, then paste the reported
+   serials (with lat/lon) into `config.yaml` under `airqualityegg.serials`.
+4. Enable Pages with source "GitHub Actions" (Settings → Pages), then push or
    run the "Update air quality data" workflow manually.
 
 ## Local development
