@@ -19,15 +19,15 @@ const EPA_CATEGORIES = [
 const BREAKPOINTS = {
   pm25: [9.0, 35.4, 55.4, 125.4, 225.4],
   pm10: [54, 154, 254, 354, 424],
+  // PM1.0 has no official EPA breakpoints; reuse the PM2.5 ones
+  // (conservative, since PM1.0 is a subset of PM2.5 mass).
+  pm1: [9.0, 35.4, 55.4, 125.4, 225.4],
 };
-// Sequential blue ramp for PM1.0 (no EPA breakpoints exist).
-const PM1_RAMP = ["#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5", "#256abf", "#184f95", "#0d366b"];
-const PM1_MAX = 30;
 
 const IDW_POWER = 2;
 const IDW_MIN_DIST_M = 50;
-const SURFACE_FULL_M = 2000;   // full opacity within this distance of a sensor
-const SURFACE_FADE_M = 3000;   // transparent beyond this
+const SURFACE_FULL_M = 6000;   // full opacity within this distance of a sensor
+const SURFACE_FADE_M = 12000;  // transparent beyond this
 const SURFACE_ALPHA = 0.45;
 const GRID_PX = 6;
 const FRAME_MS = 160;
@@ -62,14 +62,8 @@ function categoryIndex(species, v) {
 // Continuous color for the interpolated surface; category anchors for
 // PM2.5/PM10, ramp steps for PM1.0.
 function surfaceColor(species, v) {
-  let anchors, values;
-  if (species === "pm1") {
-    anchors = PM1_RAMP.map(hexToRgb);
-    values = PM1_RAMP.map((_, i) => (PM1_MAX * i) / (PM1_RAMP.length - 1));
-  } else {
-    anchors = EPA_CATEGORIES.map((c) => hexToRgb(c.color));
-    values = [0, ...BREAKPOINTS[species]];
-  }
+  const anchors = EPA_CATEGORIES.map((c) => hexToRgb(c.color));
+  const values = [0, ...BREAKPOINTS[species]];
   if (v <= values[0]) return anchors[0];
   for (let i = 1; i < values.length; i++) {
     if (v <= values[i]) {
@@ -83,10 +77,6 @@ function surfaceColor(species, v) {
 // Discrete color for sensor dots (category identity for PM2.5/PM10).
 function dotColor(species, v) {
   if (v == null) return "#9a9a9a";
-  if (species === "pm1") {
-    const [r, g, b] = surfaceColor("pm1", v);
-    return `rgb(${r},${g},${b})`;
-  }
   return EPA_CATEGORIES[categoryIndex(species, v)].color;
 }
 
@@ -265,20 +255,17 @@ function buildLegend() {
   const el = document.getElementById("legend");
   const sp = state.species;
   let html = `<div class="legend-title">${SPECIES_INFO[sp].label} (µg/m³)</div>`;
+  const bps = [0, ...BREAKPOINTS[sp]];
+  EPA_CATEGORIES.forEach((c, i) => {
+    const lo = bps[i];
+    const hi = bps[i + 1];
+    const range = hi == null ? `${lo}+` : `${lo}–${hi}`;
+    const shortName = c.name.replace("Unhealthy for Sensitive Groups", "Sensitive groups");
+    html += `<div class="row"><span class="swatch" style="background:${c.color}"></span>
+      <span>${shortName} <span style="opacity:.7">${range}</span></span></div>`;
+  });
   if (sp === "pm1") {
-    const grad = PM1_RAMP.join(",");
-    html += `<div style="height:10px;border-radius:5px;background:linear-gradient(to right,${grad})"></div>
-      <div class="row" style="justify-content:space-between"><span>0</span><span>${PM1_MAX}+</span></div>`;
-  } else {
-    const bps = [0, ...BREAKPOINTS[sp]];
-    EPA_CATEGORIES.forEach((c, i) => {
-      const lo = bps[i];
-      const hi = bps[i + 1];
-      const range = hi == null ? `${lo}+` : `${lo}–${hi}`;
-      const shortName = c.name.replace("Unhealthy for Sensitive Groups", "Sensitive groups");
-      html += `<div class="row"><span class="swatch" style="background:${c.color}"></span>
-        <span>${shortName} <span style="opacity:.7">${range}</span></span></div>`;
-    });
+    html += `<div class="row" style="opacity:.7"><span>PM2.5 breakpoints (no PM1.0 standard)</span></div>`;
   }
   html += `<hr>
     <div class="row net-row"><span class="swatch"></span><span>PurpleAir</span></div>
