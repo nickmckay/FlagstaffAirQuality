@@ -1,0 +1,207 @@
+:root {
+  --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --border: rgba(11, 11, 11, 0.10);
+  --accent: #2a78d6;
+  --shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-1: #1a1a19;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --border: rgba(255, 255, 255, 0.10);
+    --accent: #3987e5;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--text-primary);
+}
+#map {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-1);
+}
+
+.panel {
+  position: absolute;
+  z-index: 1000;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 10px 12px;
+}
+
+.top-panel {
+  top: 10px;
+  left: 10px;
+  max-width: 260px;
+}
+.title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+h1 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+
+.control-row {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+.control-row button {
+  flex: 1;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.control-row button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.status-note {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: rgba(250, 178, 25, 0.15);
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+
+.legend {
+  right: 10px;
+  bottom: 74px;
+  font-size: 11px;
+  min-width: 130px;
+}
+.legend .legend-title {
+  font-weight: 600;
+  margin-bottom: 5px;
+}
+.legend .row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+  color: var(--text-secondary);
+}
+.legend .swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  flex: none;
+}
+.legend .net-row .swatch { background: var(--text-muted); }
+.legend .net-row.egg .swatch { box-shadow: inset 0 0 0 2.5px var(--surface-1); }
+.legend hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 6px 0;
+}
+
+.time-panel {
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(640px, calc(100% - 20px));
+}
+#play-btn {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+#time-slider {
+  flex: 1;
+  accent-color: var(--accent);
+}
+.time-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  min-width: 118px;
+  text-align: right;
+}
+
+dialog {
+  max-width: 460px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  padding: 18px 22px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.4); }
+dialog h2 { margin-top: 0; font-size: 17px; }
+dialog h3 { font-size: 14px; margin-bottom: 4px; }
+dialog a { color: var(--accent); }
+dialog button {
+  border: 1px solid var(--border);
+  background: var(--accent);
+  color: #fff;
+  border-radius: 6px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.fine-print { font-size: 11px; color: var(--text-muted); }
+.cal-info { font-size: 12px; color: var(--text-secondary); }
+.cal-info table { border-collapse: collapse; margin: 4px 0; }
+.cal-info td, .cal-info th {
+  padding: 2px 8px 2px 0;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+
+.leaflet-container { font: inherit; }
+.sensor-tooltip {
+  font-size: 12px;
+  line-height: 1.35;
+}
+.sensor-tooltip .name { font-weight: 600; }
+.sensor-tooltip .net { color: var(--text-muted); font-size: 11px; }
+
+@media (max-width: 600px) {
+  .top-panel { max-width: 210px; }
+  .legend { bottom: 96px; }
+  .time-label { min-width: 0; }
+}

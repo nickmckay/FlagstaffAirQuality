@@ -1,0 +1,58 @@
+# Flagstaff Air Quality map configuration
+
+region:
+  name: Flagstaff, AZ
+  center: [35.1983, -111.6513]
+  # PurpleAir bounding box (covers town plus Doney Park, Kachina Village, Fort Valley)
+  bbox:
+    nwlat: 35.35
+    nwlng: -111.90
+    selat: 35.05
+    selng: -111.45
+  # Egg discovery radius (meters) from center
+  egg_search_radius_m: 30000
+
+purpleair:
+  base_url: https://api.purpleair.com/v1
+  # Fields fetched every run (kept minimal to conserve API points)
+  data_fields:
+    - pm1.0_atm
+    - pm2.5_cf_1
+    - pm2.5_atm
+    - pm10.0_atm
+    - humidity
+    - last_seen
+  # Fields fetched at most once per day (cached in data/sensors.json)
+  metadata_fields:
+    - name
+    - latitude
+    - longitude
+    - altitude
+  location_type: 0        # outdoor sensors only
+  max_age_s: 3600         # ignore sensors silent for more than an hour
+
+airqualityegg:
+  base_url: https://airqualityegg.com/api/v2
+  # Egg serial numbers near Flagstaff. Populate with scripts/discover_eggs.py,
+  # then pin the list here.
+  serials: []
+
+windows:
+  - key: 24h
+    hours: 24
+    step_minutes: 15
+  - key: 48h
+    hours: 48
+    step_minutes: 15
+  - key: 7d
+    hours: 168
+    step_minutes: 60
+
+archive:
+  keep_days: 30
+
+calibration:
+  # Pairing distance for PurpleAir-vs-Egg regression (meters); falls back to
+  # network-median regression when no pairs exist within this distance.
+  pair_max_distance_m: 2000
+  min_pairs: 100
