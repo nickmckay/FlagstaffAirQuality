@@ -46,8 +46,8 @@ The map overlay is ordinary kriging computed client-side per frame.
 `scripts/fit_variogram.py` (weekly) pools hourly sensor values, standardizes
 each hour across the network, and fits an exponential variogram per species;
 the frontend solves the kriging system for the reporting sensors each frame
-and shades the whole town, fading opacity where the kriging variance grows
-(far outside the network) rather than by raw distance.
+and fills a rectangle enclosing the sensor network plus a 5 km buffer, with
+no gaps inside the box.
 
 ## Setup
 

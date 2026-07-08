@@ -29,11 +29,7 @@ const GRID_PX = 6;
 const FRAME_MS = 160;
 const MAX_PLAUSIBLE_PM = 1500;
 const MERGE_DIST_M = 30;       // co-located sensors are averaged before kriging
-// variance-based fade: full opacity below lo, transparent above hi
-// (fractions of the kriging std dev at the sill). Kept high so the surface
-// spans the whole basin, fading only well beyond the network.
-const FADE_SIGMA_LO = 0.9;
-const FADE_SIGMA_HI = 1.02;
+const SURFACE_BUFFER_M = 5000; // surface rectangle: sensor bbox + this buffer
 // fallback if data/variogram.json is missing
 const VARIOGRAM_DEFAULT = { model: "exponential", nugget: 0.15, psill: 0.85, range_m: 4000 };
 let variogram = null;
@@ -226,11 +222,19 @@ const KrigingOverlay = L.Layer.extend({
     pts = merged;
 
     const { nugget, psill, range_m } = gammaParams();
-    const sill = nugget + psill;
     const gamma = (dm) => (dm <= 0 ? 0 : nugget + psill * (1 - Math.exp((-3 * dm) / range_m)));
-    const sigmaSill = Math.sqrt(sill);
-    const sigLo = FADE_SIGMA_LO * sigmaSill;
-    const sigHi = FADE_SIGMA_HI * sigmaSill;
+
+    // surface domain: rectangle enclosing every mapped sensor + 5 km buffer
+    // (all known sensors, not just those reporting, so the box is stable)
+    const bufPx = SURFACE_BUFFER_M / mpp;
+    let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+    for (const meta of Object.values(state.sensorsMeta)) {
+      if (meta.lat == null) continue;
+      const cp = m.latLngToContainerPoint([meta.lat, meta.lon]);
+      bx0 = Math.min(bx0, cp.x); by0 = Math.min(by0, cp.y);
+      bx1 = Math.max(bx1, cp.x); by1 = Math.max(by1, cp.y);
+    }
+    bx0 -= bufPx; by0 -= bufPx; bx1 += bufPx; by1 += bufPx;
 
     const n = pts.length;
     const gw = Math.ceil(size.x / GRID_PX);
@@ -259,37 +263,25 @@ const KrigingOverlay = L.Layer.extend({
     }
 
     const b = new Float64Array(mdim);
-    const w = new Float64Array(mdim);
     for (let gy = 0; gy < gh; gy++) {
       for (let gx = 0; gx < gw; gx++) {
         const px = gx * GRID_PX + GRID_PX / 2;
         const py = gy * GRID_PX + GRID_PX / 2;
-        let pred, sigma;
+        if (px < bx0 || px > bx1 || py < by0 || py > by1) continue;
+        let pred;
         if (Ainv) {
           for (let i = 0; i < n; i++) {
             b[i] = gamma(Math.hypot(px - pts[i].x, py - pts[i].y) * mpp);
           }
           b[n] = 1;
           pred = 0;
-          let variance = 0;
-          for (let i = 0; i < mdim; i++) {
+          for (let i = 0; i < n; i++) {
             let wi = 0;
             for (let j = 0; j < mdim; j++) wi += Ainv[i * mdim + j] * b[j];
-            w[i] = wi;
-            variance += wi * b[i];
-            if (i < n) pred += wi * pts[i].v;
+            pred += wi * pts[i].v;
           }
-          sigma = Math.sqrt(Math.max(variance, 0));
         } else {
-          // single station: flat field, uncertainty grows with distance
-          pred = pts[0].v;
-          sigma = Math.sqrt(gamma(Math.hypot(px - pts[0].x, py - pts[0].y) * mpp));
-        }
-        let fade = 1;
-        if (sigma > sigLo) {
-          if (sigma >= sigHi) continue;
-          const t = (sigma - sigLo) / (sigHi - sigLo);
-          fade = 1 - t * t * (3 - 2 * t); // smoothstep
+          pred = pts[0].v; // single station: flat field
         }
         pred = Math.min(Math.max(pred, 0), MAX_PLAUSIBLE_PM);
         const [r, g, bl] = surfaceColor(state.species, pred);
@@ -297,7 +289,7 @@ const KrigingOverlay = L.Layer.extend({
         d[i4] = r;
         d[i4 + 1] = g;
         d[i4 + 2] = bl;
-        d[i4 + 3] = Math.round(255 * SURFACE_ALPHA * fade);
+        d[i4 + 3] = Math.round(255 * SURFACE_ALPHA);
       }
     }
     octx.putImageData(img, 0, 0);

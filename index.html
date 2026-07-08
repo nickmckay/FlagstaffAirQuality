@@ -60,12 +60,12 @@
   <h3>Reading the map</h3>
   <p>Circles are sensors (rings mark Air Quality Eggs; plain circles are
   PurpleAir). The shaded surface is an ordinary-kriging interpolation using an
-  exponential variogram refit weekly from the archive; its opacity fades where
-  the kriging variance grows, i.e. far outside the sensor network. Between
-  sensors the surface is a statistical estimate, not a measurement. All three
-  pollutants use the EPA AQI category colors; PM1.0 has no official
-  breakpoints, so the PM2.5 breakpoints are applied. Values are µg/m³, times
-  are local (Arizona).</p>
+  exponential variogram refit weekly from the archive, drawn over a rectangle
+  enclosing the sensor network plus a 5&nbsp;km buffer. Between sensors the
+  surface is a statistical estimate, not a measurement. All three pollutants
+  use the EPA AQI category colors; PM1.0 has no official breakpoints, so the
+  PM2.5 breakpoints are applied. Values are µg/m³, times are local
+  (Arizona).</p>
   <p class="fine-print">Data © PurpleAir, Inc. and Air Quality Egg / Wicked
   Device contributors. Basemap © <a href="https://www.openstreetmap.org/copyright"
   target="_blank" rel="noopener">OpenStreetMap</a> contributors, tiles by
