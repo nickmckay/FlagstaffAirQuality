@@ -34,6 +34,9 @@ jobs:
       - name: Fit calibration
         run: python scripts/fit_calibration.py
 
+      - name: Fit variogram
+        run: python scripts/fit_variogram.py
+
       # Frames pick up the new coefficients on the next 15-minute update run.
       - name: Publish data branch
         run: |

@@ -24,13 +24,19 @@ const BREAKPOINTS = {
   pm1: [9.0, 35.4, 55.4, 125.4, 225.4],
 };
 
-const IDW_POWER = 2;
-const IDW_MIN_DIST_M = 50;
-const SURFACE_FULL_M = 6000;   // full opacity within this distance of a sensor
-const SURFACE_FADE_M = 12000;  // transparent beyond this
 const SURFACE_ALPHA = 0.45;
 const GRID_PX = 6;
 const FRAME_MS = 160;
+const MAX_PLAUSIBLE_PM = 1500;
+const MERGE_DIST_M = 30;       // co-located sensors are averaged before kriging
+// variance-based fade: full opacity below lo, transparent above hi
+// (fractions of the kriging std dev at the sill). Kept high so the surface
+// spans the whole basin, fading only well beyond the network.
+const FADE_SIGMA_LO = 0.9;
+const FADE_SIGMA_HI = 1.02;
+// fallback if data/variogram.json is missing
+const VARIOGRAM_DEFAULT = { model: "exponential", nugget: 0.15, psill: 0.85, range_m: 4000 };
+let variogram = null;
 
 const state = {
   species: "pm25",
@@ -130,9 +136,49 @@ function setBasemap() {
 setBasemap();
 document.getElementById("theme-btn").textContent = isDark() ? "☀" : "☾";
 
-/* ---------- IDW canvas overlay ---------- */
+/* ---------- ordinary kriging ---------- */
 
-const IdwOverlay = L.Layer.extend({
+function gammaParams() {
+  return (variogram && variogram[state.species]) || VARIOGRAM_DEFAULT;
+}
+
+// Gauss-Jordan inverse with partial pivoting; returns null if singular.
+function invertMatrix(A, m) {
+  const aug = new Float64Array(m * 2 * m);
+  for (let i = 0; i < m; i++) {
+    for (let j = 0; j < m; j++) aug[i * 2 * m + j] = A[i * m + j];
+    aug[i * 2 * m + m + i] = 1;
+  }
+  for (let col = 0; col < m; col++) {
+    let piv = col;
+    for (let r = col + 1; r < m; r++) {
+      if (Math.abs(aug[r * 2 * m + col]) > Math.abs(aug[piv * 2 * m + col])) piv = r;
+    }
+    const pv = aug[piv * 2 * m + col];
+    if (Math.abs(pv) < 1e-12) return null;
+    if (piv !== col) {
+      for (let j = 0; j < 2 * m; j++) {
+        const t = aug[col * 2 * m + j];
+        aug[col * 2 * m + j] = aug[piv * 2 * m + j];
+        aug[piv * 2 * m + j] = t;
+      }
+    }
+    const inv = 1 / aug[col * 2 * m + col];
+    for (let j = 0; j < 2 * m; j++) aug[col * 2 * m + j] *= inv;
+    for (let r = 0; r < m; r++) {
+      if (r === col) continue;
+      const f = aug[r * 2 * m + col];
+      if (f === 0) continue;
+      for (let j = 0; j < 2 * m; j++) aug[r * 2 * m + j] -= f * aug[col * 2 * m + j];
+    }
+  }
+  const out = new Float64Array(m * m);
+  for (let i = 0; i < m; i++)
+    for (let j = 0; j < m; j++) out[i * m + j] = aug[i * 2 * m + m + j];
+  return out;
+}
+
+const KrigingOverlay = L.Layer.extend({
   onAdd(m) {
     this._canvas = L.DomUtil.create("canvas", "leaflet-layer");
     this._canvas.style.pointerEvents = "none";
@@ -156,7 +202,7 @@ const IdwOverlay = L.Layer.extend({
 
     const ctx = this._canvas.getContext("2d");
     ctx.clearRect(0, 0, size.x, size.y);
-    const pts = currentSensorPoints();
+    let pts = currentSensorPoints();
     if (pts.length === 0) return;
 
     // meters per pixel at map center
@@ -164,6 +210,29 @@ const IdwOverlay = L.Layer.extend({
     const mpp =
       (40075016.686 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, m.getZoom() + 8);
 
+    // merge co-located sensors (identical rows make the OK system singular)
+    const merged = [];
+    for (const p of pts) {
+      const twin = merged.find(
+        (q) => Math.hypot(p.x - q.x, p.y - q.y) * mpp < MERGE_DIST_M
+      );
+      if (twin) {
+        twin.v = (twin.v * twin.n + p.v) / (twin.n + 1);
+        twin.n += 1;
+      } else {
+        merged.push({ x: p.x, y: p.y, v: p.v, n: 1 });
+      }
+    }
+    pts = merged;
+
+    const { nugget, psill, range_m } = gammaParams();
+    const sill = nugget + psill;
+    const gamma = (dm) => (dm <= 0 ? 0 : nugget + psill * (1 - Math.exp((-3 * dm) / range_m)));
+    const sigmaSill = Math.sqrt(sill);
+    const sigLo = FADE_SIGMA_LO * sigmaSill;
+    const sigHi = FADE_SIGMA_HI * sigmaSill;
+
+    const n = pts.length;
     const gw = Math.ceil(size.x / GRID_PX);
     const gh = Math.ceil(size.y / GRID_PX);
     const off = document.createElement("canvas");
@@ -173,31 +242,62 @@ const IdwOverlay = L.Layer.extend({
     const img = octx.createImageData(gw, gh);
     const d = img.data;
 
+    // ordinary kriging system: [[gamma_ij, 1],[1, 0]], inverted once per frame
+    let Ainv = null;
+    const mdim = n + 1;
+    if (n >= 2) {
+      const A = new Float64Array(mdim * mdim);
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          A[i * mdim + j] =
+            i === j ? 0 : gamma(Math.hypot(pts[i].x - pts[j].x, pts[i].y - pts[j].y) * mpp);
+        }
+        A[i * mdim + n] = 1;
+        A[n * mdim + i] = 1;
+      }
+      Ainv = invertMatrix(A, mdim);
+    }
+
+    const b = new Float64Array(mdim);
+    const w = new Float64Array(mdim);
     for (let gy = 0; gy < gh; gy++) {
       for (let gx = 0; gx < gw; gx++) {
         const px = gx * GRID_PX + GRID_PX / 2;
         const py = gy * GRID_PX + GRID_PX / 2;
-        let wsum = 0;
-        let vsum = 0;
-        let nearest = Infinity;
-        for (const p of pts) {
-          const dm = Math.max(Math.hypot(px - p.x, py - p.y) * mpp, IDW_MIN_DIST_M);
-          if (dm < nearest) nearest = dm;
-          const w = 1 / Math.pow(dm, IDW_POWER);
-          wsum += w;
-          vsum += w * p.v;
+        let pred, sigma;
+        if (Ainv) {
+          for (let i = 0; i < n; i++) {
+            b[i] = gamma(Math.hypot(px - pts[i].x, py - pts[i].y) * mpp);
+          }
+          b[n] = 1;
+          pred = 0;
+          let variance = 0;
+          for (let i = 0; i < mdim; i++) {
+            let wi = 0;
+            for (let j = 0; j < mdim; j++) wi += Ainv[i * mdim + j] * b[j];
+            w[i] = wi;
+            variance += wi * b[i];
+            if (i < n) pred += wi * pts[i].v;
+          }
+          sigma = Math.sqrt(Math.max(variance, 0));
+        } else {
+          // single station: flat field, uncertainty grows with distance
+          pred = pts[0].v;
+          sigma = Math.sqrt(gamma(Math.hypot(px - pts[0].x, py - pts[0].y) * mpp));
         }
-        if (nearest > SURFACE_FADE_M) continue;
-        const fade =
-          nearest <= SURFACE_FULL_M
-            ? 1
-            : 1 - (nearest - SURFACE_FULL_M) / (SURFACE_FADE_M - SURFACE_FULL_M);
-        const [r, g, b] = surfaceColor(state.species, vsum / wsum);
-        const i = (gy * gw + gx) * 4;
-        d[i] = r;
-        d[i + 1] = g;
-        d[i + 2] = b;
-        d[i + 3] = Math.round(255 * SURFACE_ALPHA * fade);
+        let fade = 1;
+        if (sigma > sigLo) {
+          if (sigma >= sigHi) continue;
+          const t = (sigma - sigLo) / (sigHi - sigLo);
+          fade = 1 - t * t * (3 - 2 * t); // smoothstep
+        }
+        pred = Math.min(Math.max(pred, 0), MAX_PLAUSIBLE_PM);
+        const [r, g, bl] = surfaceColor(state.species, pred);
+        const i4 = (gy * gw + gx) * 4;
+        d[i4] = r;
+        d[i4 + 1] = g;
+        d[i4 + 2] = bl;
+        d[i4 + 3] = Math.round(255 * SURFACE_ALPHA * fade);
       }
     }
     octx.putImageData(img, 0, 0);
@@ -205,7 +305,7 @@ const IdwOverlay = L.Layer.extend({
     ctx.drawImage(off, 0, 0, size.x, size.y);
   },
 });
-const idw = new IdwOverlay().addTo(map);
+const surface = new KrigingOverlay().addTo(map);
 
 function currentSensorPoints() {
   const f = state.frames;
@@ -323,7 +423,7 @@ function setFrame(i, redrawSurface = true) {
   slider.value = state.frame;
   timeLabel.textContent = formatTime(state.frames.times[state.frame]);
   styleMarkers();
-  if (redrawSurface) idw.redraw();
+  if (redrawSurface) surface.redraw();
 }
 
 let playTimer = null;
@@ -395,7 +495,7 @@ wireToggle("species-toggle", "species", (sp) => {
   state.species = sp;
   buildLegend();
   styleMarkers();
-  idw.redraw();
+  surface.redraw();
 });
 wireToggle("window-toggle", "window", (win) => {
   const wasPlaying = state.playing;
@@ -444,6 +544,7 @@ function showError(err) {
   document.querySelectorAll("#window-toggle button").forEach((b) =>
     b.classList.toggle("active", b.dataset.window === state.window)
   );
+  variogram = await fetchJson("data/variogram.json").catch(() => null);
   try {
     const meta = await fetchJson("data/sensors.json");
     state.sensorsMeta = meta.sensors || {};

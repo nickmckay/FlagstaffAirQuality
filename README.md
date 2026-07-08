@@ -40,6 +40,15 @@ Two corrections are applied:
 The archive always stores uncalibrated base values; the local fit is applied
 when frames are built, so a refit retroactively updates the displayed history.
 
+## Interpolated surface
+
+The map overlay is ordinary kriging computed client-side per frame.
+`scripts/fit_variogram.py` (weekly) pools hourly sensor values, standardizes
+each hour across the network, and fits an exponential variogram per species;
+the frontend solves the kriging system for the reporting sensors each frame
+and shades the whole town, fading opacity where the kriging variance grows
+(far outside the network) rather than by raw distance.
+
 ## Setup
 
 1. **PurpleAir key**: create an account at

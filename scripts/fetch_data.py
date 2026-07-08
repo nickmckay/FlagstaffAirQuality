@@ -375,6 +375,10 @@ def main():
     DATA_DIR.mkdir(exist_ok=True)
     calibration = load_json(CALIBRATION_PATH) or default_calibration()
     write_json(CALIBRATION_PATH, calibration)
+    from fit_variogram import VARIOGRAM_PATH, default_variogram
+
+    if not load_json(VARIOGRAM_PATH):
+        write_json(VARIOGRAM_PATH, default_variogram())
     sensors_meta = load_json(SENSORS_PATH, default={"sensors": {}})
 
     if args.synthetic:
