@@ -165,6 +165,51 @@ def append_archive(rows, keep_days):
     os.replace(tmp, ARCHIVE_PATH)
 
 
+HISTORY_FIELDS = ["pm1.0_atm", "pm2.5_cf_1", "pm2.5_atm", "pm10.0_atm", "humidity"]
+HISTORY_FIELD_TO_ROWKEY = {
+    "pm1.0_atm": "pm1_raw",
+    "pm2.5_cf_1": "pm25_cf1",
+    "pm2.5_atm": "pm25_atm",
+    "pm10.0_atm": "pm10_raw",
+    "humidity": "rh",
+}
+
+
+def fetch_purpleair_history(key, base_url, sensor_index, start, end, average_min):
+    """One /v1/sensors/{index}/history call -> archive-format rows.
+
+    Costs points: 2 + ~6 x rows returned.
+    """
+    import requests
+
+    resp = requests.get(
+        f"{base_url}/sensors/{sensor_index}/history",
+        headers={"X-API-Key": key},
+        params={
+            "fields": ",".join(HISTORY_FIELDS),
+            "start_timestamp": int(start.timestamp()),
+            "end_timestamp": int(end.timestamp()),
+            "average": average_min,
+        },
+        timeout=120,
+    )
+    resp.raise_for_status()
+    body = resp.json()
+    idx = {c: i for i, c in enumerate(body["fields"])}
+    rows = []
+    for rec in body["data"]:
+        row = {
+            "ts": iso(datetime.fromtimestamp(rec[idx["time_stamp"]], tz=timezone.utc)),
+            "id": f"pa_{sensor_index}",
+            "network": "purpleair",
+        }
+        for field, rowkey in HISTORY_FIELD_TO_ROWKEY.items():
+            if field in idx and isinstance(rec[idx[field]], (int, float)):
+                row[rowkey] = rec[idx[field]]
+        rows.append(row)
+    return rows
+
+
 def default_calibration():
     return {
         "fitted_at": None,

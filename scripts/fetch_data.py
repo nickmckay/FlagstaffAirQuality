@@ -28,6 +28,7 @@ from common import (
     SPECIES,
     append_archive,
     default_calibration,
+    fetch_purpleair_history,
     floor_to_slot,
     iso,
     load_config,
@@ -190,6 +191,73 @@ def fetch_eggs(cfg):
     return rows, meta
 
 
+GAP_LOOKBACK_H = 12       # how far back to self-heal missed cron runs
+GAP_SLOT_MIN = 15
+
+
+def fill_purpleair_gaps(cfg, sensors_meta):
+    """Backfill 15-min slots the cron missed, via the PurpleAir history API.
+
+    GitHub's scheduler skips or delays runs; a slot with no PurpleAir rows at
+    all within the lookback window means a missed run. Costs ~6 points per
+    sensor per missing 10-min row, so a typical single missed tick is cheap.
+    """
+    key = os.environ.get("PURPLEAIR_API_KEY")
+    pa_ids = sorted(
+        s for s, m in sensors_meta.get("sensors", {}).items() if m["network"] == "purpleair"
+    )
+    if not key or not pa_ids:
+        return
+
+    now = utcnow()
+    lookback_start = floor_to_slot(now - timedelta(hours=GAP_LOOKBACK_H), GAP_SLOT_MIN)
+    covered = set()
+    for row in read_archive(max_age_days=1):
+        if row.get("network") != "purpleair":
+            continue
+        ts = parse_iso(row["ts"])
+        if ts >= lookback_start:
+            covered.add(floor_to_slot(ts, GAP_SLOT_MIN))
+
+    # every complete slot in the window should have data; skip the current one
+    missing = []
+    slot = lookback_start
+    current = floor_to_slot(now, GAP_SLOT_MIN)
+    while slot < current:
+        if slot not in covered:
+            missing.append(slot)
+        slot += timedelta(minutes=GAP_SLOT_MIN)
+    if not missing:
+        return
+
+    # merge into contiguous spans, pad half a slot each side
+    spans = [[missing[0], missing[0]]]
+    for m in missing[1:]:
+        if (m - spans[-1][1]).total_seconds() <= GAP_SLOT_MIN * 60:
+            spans[-1][1] = m
+        else:
+            spans.append([m, m])
+    print(f"Gap fill: {len(missing)} missing slot(s) in {len(spans)} span(s): "
+          + ", ".join(f"{iso(a)}..{iso(b)}" for a, b in spans))
+
+    base_url = cfg["purpleair"]["base_url"]
+    rows = []
+    for start, end in spans:
+        for sid in pa_ids:
+            try:
+                rows.extend(
+                    fetch_purpleair_history(
+                        key, base_url, sid.removeprefix("pa_"),
+                        start, end + timedelta(minutes=GAP_SLOT_MIN), 10,
+                    )
+                )
+            except requests.HTTPError as e:
+                print(f"Gap fill {sid}: {e}")
+    if rows:
+        append_archive(rows, keep_days=cfg["archive"]["keep_days"])
+        print(f"Gap fill: added {len(rows)} history rows")
+
+
 def build_frames(cfg, sensors_meta, calibration):
     """Rebuild frames_{window}.json from the archive."""
     max_hours = max(w["hours"] for w in cfg["windows"])
@@ -318,6 +386,7 @@ def main():
         all_rows = pa_rows + egg_rows
         if all_rows:
             append_archive(all_rows, keep_days=cfg["archive"]["keep_days"])
+            fill_purpleair_gaps(cfg, sensors_meta)
         elif ARCHIVE_PATH.exists():
             print("WARNING: no new data this run; rebuilding frames from archive")
         else:

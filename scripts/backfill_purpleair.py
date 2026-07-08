@@ -16,59 +16,18 @@ import argparse
 import os
 import sys
 import time as time_mod
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import requests
 
 from common import (
     SENSORS_PATH,
     append_archive,
-    iso,
+    fetch_purpleair_history,
     load_config,
     load_json,
     utcnow,
 )
-
-HISTORY_FIELDS = ["pm1.0_atm", "pm2.5_cf_1", "pm2.5_atm", "pm10.0_atm", "humidity"]
-FIELD_TO_ROWKEY = {
-    "pm1.0_atm": "pm1_raw",
-    "pm2.5_cf_1": "pm25_cf1",
-    "pm2.5_atm": "pm25_atm",
-    "pm10.0_atm": "pm10_raw",
-    "humidity": "rh",
-}
-
-
-def fetch_history(key, base_url, sensor_index, start, end, average_min):
-    resp = requests.get(
-        f"{base_url}/sensors/{sensor_index}/history",
-        headers={"X-API-Key": key},
-        params={
-            "fields": ",".join(HISTORY_FIELDS),
-            "start_timestamp": int(start.timestamp()),
-            "end_timestamp": int(end.timestamp()),
-            "average": average_min,
-        },
-        timeout=120,
-    )
-    resp.raise_for_status()
-    body = resp.json()
-    idx = {c: i for i, c in enumerate(body["fields"])}
-    rows = []
-    for rec in body["data"]:
-        ts = rec[idx["time_stamp"]]
-        row = {
-            "ts": iso(datetime.fromtimestamp(ts, tz=timezone.utc)),
-            "id": f"pa_{sensor_index}",
-            "network": "purpleair",
-        }
-        for field, rowkey in FIELD_TO_ROWKEY.items():
-            v = rec[idx.get(field, -1)] if field in idx else None
-            if isinstance(v, (int, float)):
-                row[rowkey] = v
-        rows.append(row)
-    return rows
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -95,8 +54,8 @@ def main():
     for i, sid in enumerate(pa_ids):
         index = sid.removeprefix("pa_")
         try:
-            fine = fetch_history(key, base_url, index, fine_start, now, 10)
-            hourly = fetch_history(key, base_url, index, span_start, fine_start, 60)
+            fine = fetch_purpleair_history(key, base_url, index, fine_start, now, 10)
+            hourly = fetch_purpleair_history(key, base_url, index, span_start, fine_start, 60)
         except requests.HTTPError as e:
             print(f"{sid}: history failed: {e}")
             continue

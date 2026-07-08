@@ -2,7 +2,9 @@ name: Update air quality data
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    # offset from :00/:15/:30/:45 — GitHub's scheduler drops jobs most at
+    # round marks; missed slots self-heal via the history API anyway
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
   push:
     branches: [main]
