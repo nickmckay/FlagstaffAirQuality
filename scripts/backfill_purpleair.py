@@ -3,7 +3,7 @@
 Pulls /v1/sensors/{index}/history for every PurpleAir sensor already in
 data/sensors.json: 10-minute averages over the recent fine window (feeds the
 15-minute animation frames) and hourly averages over the full span (feeds the
-7-day window and calibration pairs). Costs API points: roughly
+14-day window and calibration pairs). Costs API points: roughly
 2 + 6 x rows per call (~100k points for 22 sensors, 48h fine + 7d hourly).
 
 Usage:

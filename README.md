@@ -15,7 +15,7 @@ Arizona, combining the [PurpleAir](https://www2.purpleair.com/) and
   readings with their own timestamps; Eggs publish sporadically, so readings
   up to 24 h old are archived into their true time slot). Results accumulate
   in a rolling 30-day archive and are condensed into animation frames (24 h
-  and 48 h at 15-minute steps, 7 days hourly).
+  and 48 h at 15-minute steps, 14 days hourly).
 - Generated JSON lives on the single-commit `data` branch (force-pushed each
   run, so the repo history stays small) and is deployed to Pages together with
   the static site.

@@ -137,7 +137,12 @@ h1 {
   flex: none;
 }
 .legend .net-row .swatch { background: var(--text-muted); }
-.legend .net-row.egg .swatch { box-shadow: inset 0 0 0 2.5px var(--surface-1); }
+.legend .net-row.egg .swatch {
+  width: 10px;
+  height: 14px;
+  border-radius: 50% 50% 50% 50% / 58% 58% 42% 42%;
+  box-shadow: inset 0 0 0 2px var(--surface-1);
+}
 .legend hr {
   border: none;
   border-top: 1px solid var(--border);
@@ -209,6 +214,16 @@ dialog button {
 }
 
 .leaflet-container { font: inherit; }
+.egg-icon-wrap { background: none; border: none; }
+.egg-icon {
+  width: 20px;
+  height: 27px;
+  /* vertical oval, slightly narrower at the top: egg */
+  border-radius: 50% 50% 50% 50% / 58% 58% 42% 42%;
+  border: 3px solid var(--surface-1);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  background: #9a9a9a;
+}
 .sensor-tooltip {
   font-size: 12px;
   line-height: 1.35;

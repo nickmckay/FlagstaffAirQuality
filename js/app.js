@@ -344,14 +344,25 @@ function rebuildMarkers() {
   for (const sid of state.frames.sensors) {
     const meta = state.sensorsMeta[sid];
     if (!meta || meta.lat == null) continue;
-    const isEgg = meta.network === "egg";
-    const marker = L.circleMarker([meta.lat, meta.lon], {
-      radius: isEgg ? 9 : 7,
-      weight: isEgg ? 3 : 1.2,
-      color: isEgg ? (isDark() ? "#1a1a19" : "#ffffff") : "rgba(0,0,0,0.45)",
-      fillOpacity: 0.95,
-      fillColor: "#9a9a9a",
-    }).addTo(map);
+    let marker;
+    if (meta.network === "egg") {
+      marker = L.marker([meta.lat, meta.lon], {
+        icon: L.divIcon({
+          className: "egg-icon-wrap",
+          html: '<div class="egg-icon"></div>',
+          iconSize: [20, 27],
+          iconAnchor: [10, 13],
+        }),
+      }).addTo(map);
+    } else {
+      marker = L.circleMarker([meta.lat, meta.lon], {
+        radius: 7,
+        weight: 1.2,
+        color: "rgba(0,0,0,0.45)",
+        fillOpacity: 0.95,
+        fillColor: "#9a9a9a",
+      }).addTo(map);
+    }
     marker.bindTooltip(() => tooltipHtml(sid), { sticky: true });
     state.markers[sid] = marker;
   }
@@ -361,10 +372,19 @@ function rebuildMarkers() {
 function styleMarkers() {
   for (const sid in state.markers) {
     const v = currentValue(sid);
-    state.markers[sid].setStyle({
-      fillColor: dotColor(state.species, v),
-      fillOpacity: v == null ? 0.25 : 0.95,
-    });
+    const marker = state.markers[sid];
+    if (marker.setStyle) {
+      marker.setStyle({
+        fillColor: dotColor(state.species, v),
+        fillOpacity: v == null ? 0.25 : 0.95,
+      });
+    } else {
+      const el = marker.getElement()?.querySelector(".egg-icon");
+      if (el) {
+        el.style.background = dotColor(state.species, v);
+        el.style.opacity = v == null ? 0.35 : 1;
+      }
+    }
   }
 }
 
@@ -524,11 +544,11 @@ function showError(err) {
 /* ---------- init ---------- */
 
 (async function init() {
-  // shareable state in the hash, e.g. #pm1/7d
+  // shareable state in the hash, e.g. #pm1/14d
   const hashParts = location.hash.replace("#", "").split("/");
   for (const part of hashParts) {
     if (SPECIES_INFO[part]) state.species = part;
-    if (["24h", "48h", "7d"].includes(part)) state.window = part;
+    if (["24h", "48h", "14d"].includes(part)) state.window = part;
   }
   document.querySelectorAll("#species-toggle button").forEach((b) =>
     b.classList.toggle("active", b.dataset.species === state.species)

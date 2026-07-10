@@ -64,8 +64,8 @@ windows:
   - key: 48h
     hours: 48
     step_minutes: 15
-  - key: 7d
-    hours: 168
+  - key: 14d
+    hours: 336
     step_minutes: 60
 
 archive:
