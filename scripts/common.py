@@ -165,6 +165,78 @@ def append_archive(rows, keep_days):
     os.replace(tmp, ARCHIVE_PATH)
 
 
+EGG_PM_LABELS = {"pm1p0": "pm1", "pm2p5": "pm25", "pm10p0": "pm10"}
+
+
+def parse_egg_date(s):
+    """Egg dates look like '2026-07-10T20:43:16.621Z' (sometimes no millis)."""
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            return datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def egg_particulate_row(serial, payload, date_str):
+    """full_particulate payload -> (archive row or None, lat, lon)."""
+    loc = payload.get("__location") or {}
+    lat, lon = loc.get("lat"), loc.get("lon")
+    ts = parse_egg_date(date_str) if date_str else None
+    if ts is None:
+        return None, lat, lon
+    row = {"ts": iso(ts), "id": f"egg_{serial}", "network": "egg"}
+    for label, sp in EGG_PM_LABELS.items():
+        v = payload.get(label)
+        if isinstance(v, (int, float)) and 0 <= v <= MAX_PLAUSIBLE_PM:
+            row[sp] = round(float(v), 1)
+    if not any(sp in row for sp in SPECIES):
+        return None, lat, lon
+    return row, lat, lon
+
+
+def fetch_egg_history(key, base_url, serial, start, end, bucket_min=10):
+    """Fetch full_particulate history for one egg, bucketed to bucket_min means.
+
+    Uses the by-topic endpoint so only particulate messages transfer
+    (native cadence is one per minute).
+    """
+    from urllib.parse import quote
+
+    import requests
+
+    topic = f"/orgs/wd/aqe/full_particulate/{serial}"
+    resp = requests.get(
+        f"{base_url}/messages/topic/{quote(topic, safe='')}",
+        params={"apiKey": key, "start-date": iso(start), "end-date": iso(end)},
+        timeout=300,
+    )
+    resp.raise_for_status()
+    messages = resp.json()
+    if not isinstance(messages, list):
+        return []
+
+    buckets = {}
+    for msg in messages:
+        row, _, _ = egg_particulate_row(serial, msg.get("payload", {}), msg.get("date"))
+        if not row:
+            continue
+        slot = iso(floor_to_slot(parse_iso(row["ts"]), bucket_min))
+        acc = buckets.setdefault(slot, {sp: [] for sp in SPECIES})
+        for sp in SPECIES:
+            if sp in row:
+                acc[sp].append(row[sp])
+    rows = []
+    for slot, acc in sorted(buckets.items()):
+        row = {"ts": slot, "id": f"egg_{serial}", "network": "egg"}
+        for sp, vals in acc.items():
+            if vals:
+                row[sp] = round(sum(vals) / len(vals), 1)
+        if any(sp in row for sp in SPECIES):
+            rows.append(row)
+    return rows
+
+
 HISTORY_FIELDS = ["pm1.0_atm", "pm2.5_cf_1", "pm2.5_atm", "pm10.0_atm", "humidity"]
 HISTORY_FIELD_TO_ROWKEY = {
     "pm1.0_atm": "pm1_raw",

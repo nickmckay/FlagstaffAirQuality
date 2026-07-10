@@ -28,6 +28,8 @@ from common import (
     SPECIES,
     append_archive,
     default_calibration,
+    egg_particulate_row,
+    fetch_egg_history,
     fetch_purpleair_history,
     floor_to_slot,
     iso,
@@ -118,81 +120,114 @@ def fetch_purpleair(cfg, sensors_meta):
     return rows, sensors_meta
 
 
-# Air Quality Egg: the public /eggs/mapped endpoint carries each mapped egg's
-# latest readings (labels pm1p0/pm2p5/pm10p0, humidity, lat/lon) with
-# per-reading timestamps. No auth needed; per-device endpoints are restricted
-# to owned/followed eggs and are only required for historical backfill.
-EGG_LABELS = {"pm1p0": "pm1", "pm2p5": "pm25", "pm10p0": "pm10"}
-EGG_MAX_PM = 1500  # µg/m³; above this treat as sensor fault
-
-
-def parse_egg_ts(s):
-    """lastData timestamps look like '07/07/2026 17:07:21' (UTC)."""
-    return datetime.strptime(s, "%m/%d/%Y %H:%M:%S").replace(tzinfo=timezone.utc)
+def egg_config_entries(cfg):
+    """-> [(serial, name, fallback_lat, fallback_lon)]"""
+    out = []
+    for entry in cfg["airqualityegg"].get("serials") or []:
+        if isinstance(entry, dict):
+            out.append(
+                (entry["serial"].lower(), entry.get("name"), entry.get("lat"), entry.get("lon"))
+            )
+        else:
+            out.append((str(entry).lower(), None, None, None))
+    return out
 
 
 def fetch_eggs(cfg):
+    """Most-recent reading per egg via the authorized per-device endpoint."""
     aqe = cfg["airqualityegg"]
-    serials = aqe.get("serials") or []
-    if not serials:
+    entries = egg_config_entries(cfg)
+    if not entries:
         return [], {}
-    wanted = {}
-    for entry in serials:
-        if isinstance(entry, dict):
-            wanted[entry["serial"].lower()] = entry.get("name")
-        else:
-            wanted[str(entry).lower()] = None
-
-    try:
-        resp = requests.get(f"{aqe['base_url']}/eggs/mapped", timeout=120)
-        resp.raise_for_status()
-        eggs = resp.json()
-    except Exception as e:
-        print(f"Egg fetch failed: {e}")
+    key = os.environ.get("AQE_API_KEY")
+    if not key:
+        print("WARNING: AQE_API_KEY not set; skipping Air Quality Egg")
         return [], {}
 
     max_age_s = aqe.get("max_age_s", 86400)
     now = utcnow()
     rows, meta = [], {}
-    for egg in eggs:
-        serial = str(egg.get("serial_number", "")).lower()
-        if serial not in wanted:
-            continue
+    for serial, name, flat, flon in entries:
         sid = f"egg_{serial}"
-        egg_meta = {"name": wanted[serial] or serial, "lat": None, "lon": None, "network": "egg"}
-        values, newest = {}, None
-        for item in egg.get("lastData", []):
-            label = item.get("label")
-            if label == "latitude":
-                egg_meta["lat"] = item.get("value")
-            elif label == "longitude":
-                egg_meta["lon"] = item.get("value")
-            elif label in EGG_LABELS:
-                try:
-                    ts = parse_egg_ts(item["timestamp"])
-                    v = float(item["value"])
-                except (KeyError, ValueError, TypeError):
-                    continue
-                if (now - ts).total_seconds() > max_age_s or not (0 <= v <= EGG_MAX_PM):
-                    continue
-                values[EGG_LABELS[label]] = v
-                newest = max(newest, ts) if newest else ts
-        # fall back to coordinates pinned in config.yaml
-        for entry in serials:
-            if isinstance(entry, dict) and entry["serial"].lower() == serial:
-                egg_meta["lat"] = egg_meta["lat"] or entry.get("lat")
-                egg_meta["lon"] = egg_meta["lon"] or entry.get("lon")
+        egg_meta = {"name": name or serial, "lat": flat, "lon": flon, "network": "egg"}
+        try:
+            resp = requests.get(
+                f"{aqe['base_url']}/most-recent/messages/device/{serial}",
+                params={"apiKey": key},
+                timeout=60,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+        except Exception as e:
+            print(f"Egg {serial}: most-recent failed: {e}")
+            meta[sid] = egg_meta
+            continue
+
+        fp = body.get("full_particulate") or {}
+        date_str = fp.get("date") or fp.get("__timestamp") or body.get("last_report")
+        row, lat, lon = egg_particulate_row(serial, fp, date_str)
+        if lat is not None:
+            egg_meta["lat"], egg_meta["lon"] = lat, lon
         meta[sid] = egg_meta
-        if values and newest:
-            rows.append({"ts": iso(newest), "id": sid, "network": "egg", **values})
+        if row and (now - parse_iso(row["ts"])).total_seconds() <= max_age_s:
+            rows.append(row)
+            egg_meta["last_seen"] = row["ts"]
         else:
-            print(f"Egg {serial}: no fresh PM readings (last data too old or invalid)")
-    print(f"Eggs: {len(rows)} of {len(wanted)} reporting fresh PM data")
+            print(f"Egg {serial}: no fresh particulate reading")
+    print(f"Eggs: {len(rows)} of {len(entries)} reporting fresh PM data")
     return rows, meta
 
 
 GAP_LOOKBACK_H = 12       # how far back to self-heal missed cron runs
 GAP_SLOT_MIN = 15
+
+
+def find_missing_slots(match, now):
+    """15-min slots in the lookback window with no archive rows where
+    match(row) is true. Excludes the current (incomplete) slot."""
+    lookback_start = floor_to_slot(now - timedelta(hours=GAP_LOOKBACK_H), GAP_SLOT_MIN)
+    covered = set()
+    for row in read_archive(max_age_days=1):
+        if not match(row):
+            continue
+        ts = parse_iso(row["ts"])
+        if ts >= lookback_start:
+            covered.add(floor_to_slot(ts, GAP_SLOT_MIN))
+    missing = []
+    slot = lookback_start
+    current = floor_to_slot(now, GAP_SLOT_MIN)
+    while slot < current:
+        if slot not in covered:
+            missing.append(slot)
+        slot += timedelta(minutes=GAP_SLOT_MIN)
+    return missing
+
+
+def fill_egg_gaps(cfg):
+    """Backfill missed egg slots from the per-device history endpoint."""
+    key = os.environ.get("AQE_API_KEY")
+    if not key:
+        return
+    aqe = cfg["airqualityegg"]
+    now = utcnow()
+    rows = []
+    for serial, _, _, _ in egg_config_entries(cfg):
+        sid = f"egg_{serial}"
+        missing = find_missing_slots(lambda r, s=sid: r["id"] == s, now)
+        if not missing:
+            continue
+        # one span from first to last missing slot (egg history is free)
+        start, end = missing[0], missing[-1] + timedelta(minutes=GAP_SLOT_MIN)
+        try:
+            got = fetch_egg_history(key, aqe["base_url"], serial, start, end)
+        except Exception as e:
+            print(f"Egg gap fill {serial}: {e}")
+            continue
+        if got:
+            print(f"Egg gap fill {serial}: {len(missing)} missing slot(s), {len(got)} rows")
+            rows.extend(got)
+    if rows:
+        append_archive(rows, keep_days=cfg["archive"]["keep_days"])
 
 
 def fill_purpleair_gaps(cfg, sensors_meta):
@@ -210,23 +245,7 @@ def fill_purpleair_gaps(cfg, sensors_meta):
         return
 
     now = utcnow()
-    lookback_start = floor_to_slot(now - timedelta(hours=GAP_LOOKBACK_H), GAP_SLOT_MIN)
-    covered = set()
-    for row in read_archive(max_age_days=1):
-        if row.get("network") != "purpleair":
-            continue
-        ts = parse_iso(row["ts"])
-        if ts >= lookback_start:
-            covered.add(floor_to_slot(ts, GAP_SLOT_MIN))
-
-    # every complete slot in the window should have data; skip the current one
-    missing = []
-    slot = lookback_start
-    current = floor_to_slot(now, GAP_SLOT_MIN)
-    while slot < current:
-        if slot not in covered:
-            missing.append(slot)
-        slot += timedelta(minutes=GAP_SLOT_MIN)
+    missing = find_missing_slots(lambda r: r.get("network") == "purpleair", now)
     if not missing:
         return
 
@@ -391,6 +410,7 @@ def main():
         if all_rows:
             append_archive(all_rows, keep_days=cfg["archive"]["keep_days"])
             fill_purpleair_gaps(cfg, sensors_meta)
+            fill_egg_gaps(cfg)
         elif ARCHIVE_PATH.exists():
             print("WARNING: no new data this run; rebuilding frames from archive")
         else:
