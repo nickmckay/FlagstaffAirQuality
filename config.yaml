@@ -52,6 +52,9 @@ airqualityegg:
       name: North Flagstaff
       lat: 35.2378
       lon: -111.6651
+      # located out of town before this (local midnight Jul 6, UTC-7);
+      # earlier data excluded from map, calibration, and variogram
+      valid_from: "2026-07-06T07:00:00Z"
     - serial: egg0004a30b0131fe09
       name: Doney Park
       lat: 35.2651

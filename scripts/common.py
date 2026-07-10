@@ -147,14 +147,30 @@ def read_archive(max_age_days=None):
     return rows
 
 
+def sensor_valid_from():
+    """{sensor_id: datetime} for sensors with a valid_from in config.yaml."""
+    out = {}
+    cfg = load_config()
+    for entry in cfg["airqualityegg"].get("serials") or []:
+        if isinstance(entry, dict) and entry.get("valid_from"):
+            out[f"egg_{entry['serial'].lower()}"] = parse_iso(entry["valid_from"])
+    return out
+
+
 def append_archive(rows, keep_days):
     """Append rows, then rewrite the file pruned to keep_days.
 
     Deduplicates on (ts, id) with newest write winning — egg readings carry
-    their own timestamps and get re-seen across polls.
+    their own timestamps and get re-seen across polls. Rows before a sensor's
+    valid_from (config.yaml) are dropped, including previously archived ones,
+    since the whole file is rewritten here.
     """
+    valid_from = sensor_valid_from()
     merged = {}
     for row in read_archive(max_age_days=keep_days) + list(rows):
+        vf = valid_from.get(row["id"])
+        if vf and parse_iso(row["ts"]) < vf:
+            continue
         merged[(row["ts"], row["id"])] = row
     existing = sorted(merged.values(), key=lambda r: r["ts"])
     ARCHIVE_PATH.parent.mkdir(parents=True, exist_ok=True)
