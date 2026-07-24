@@ -1,0 +1,1 @@
+{"fitted_at":"2026-07-20T11:58:53Z","note":"exponential fit on per-hour standardized values","pm1":{"model":"exponential","nugget":0.407,"psill":0.9496,"range_m":15000,"n_pairs":141432},"pm25":{"model":"exponential","nugget":0.5801,"psill":0.5801,"range_m":15000,"n_pairs":141401},"pm10":{"model":"exponential","nugget":0.4962,"psill":0.7442,"range_m":15000,"n_pairs":141432}}
