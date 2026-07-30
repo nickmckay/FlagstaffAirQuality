@@ -1,8 +1,6 @@
 name: Fit local calibration
 
 on:
-  schedule:
-    - cron: "17 9 * * 1"   # weekly, Monday 09:17 UTC
   workflow_dispatch:
 
 permissions:
